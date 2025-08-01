@@ -3,3 +3,5 @@ opencv-python
 numpy
 edge_impulse_linux
 RPi.GPIO
+pyaudio
+six
