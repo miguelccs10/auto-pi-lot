@@ -1,0 +1,4 @@
+# Dependências para desenvolvimento e simulação no PC
+opencv-python
+numpy
+edge_impulse_linux

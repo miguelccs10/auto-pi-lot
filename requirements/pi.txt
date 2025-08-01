@@ -1,0 +1,5 @@
+# Dependências para execução no Raspberry Pi
+opencv-python
+numpy
+edge_impulse_linux
+RPi.GPIO
