@@ -1,4 +1,4 @@
-# app/main.py (Versão de TESTE com redimensionamento manual)
+# app/main.py (Versão com Modo de Debug)
 
 import cv2
 import configparser
@@ -6,8 +6,11 @@ import os
 import sys
 import time
 
+# --- NOVO: MODO DE DEBUG ---
+# Mude para True para ver informações detalhadas no console e na tela.
 DEBUG_MODE = True
 
+# --- Lógica de Importação Condicional ---
 try:
     from app.hardware.motor_control import MotorControl
     from edge_impulse_linux.image import ImageImpulseRunner
@@ -24,29 +27,35 @@ except (ImportError, RuntimeError) as e:
         print(f"ERRO de importação inesperado: {e}")
         sys.exit(1)
 
-# ... (funções draw_detections e draw_debug_info continuam as mesmas) ...
-def draw_detections(frame, results, threshold, scale_x, scale_y):
+def draw_detections(frame, results, threshold):
+    """Desenha as caixas delimitadoras das detecções VÁLIDAS."""
     if not results or "bounding_boxes" not in results["result"].keys():
         return frame
+        
     for bbox in results["result"]["bounding_boxes"]:
         if bbox['value'] >= threshold:
-            # Escala as coordenadas da caixa de volta para o tamanho original do frame
-            x = int(bbox['x'] * scale_x)
-            y = int(bbox['y'] * scale_y)
-            w = int(bbox['width'] * scale_x)
-            h = int(bbox['height'] * scale_y)
             label = bbox['label']
             confidence = bbox['value']
+            x, y, w, h = bbox['x'], bbox['y'], bbox['width'], bbox['height']
             
             cv2.rectangle(frame, (x, y), (x + w, y + h), (0, 255, 0), 2)
             cv2.putText(frame, f"{label} {confidence:.2f}", (x, y - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
     return frame
 
+# --- NOVO: Função para desenhar informações de debug na tela ---
 def draw_debug_info(frame, fps, results):
-    # ... (código igual ao anterior) ...
+    """Desenha informações de FPS e detecções brutas na tela."""
+    # Desenha o FPS
+    cv2.putText(frame, f"FPS: {fps:.1f}", (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 0, 255), 2)
+
+    if results and "bounding_boxes" in results["result"].keys():
+        all_detections = results["result"]["bounding_boxes"]
+        # Desenha o número total de detecções (antes do filtro de confiança)
+        cv2.putText(frame, f"Deteccoes Brutas: {len(all_detections)}", (10, 60), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 255), 2)
+    return frame
 
 def main():
-    print("--- Iniciando Auto-Pi-Lot (TESTE DE REDIMENSIONAMENTO) ---")
+    print("--- Iniciando Auto-Pi-Lot (Edge Impulse) ---")
 
     config = configparser.ConfigParser()
     config.read('config.ini', encoding='utf-8')
@@ -55,35 +64,27 @@ def main():
     camera_index = config.getint('Simulacao', 'camera_index')
 
     runner = None
-    model_width, model_height = 120, 120 # Default
-
-    # A inicialização do runner agora é um pouco diferente
-    try:
-        if IS_RASPBERRY_PI or (ImageImpulseRunner is not None):
-            runner = ImageImpulseRunner(model_path)
-            model_info = runner.init()
-            model_width = model_info['model_parameters']['image_width']
-            model_height = model_info['model_parameters']['image_height']
-            print(f"Modelo '{model_info['project']['name']}' carregado. Espera input de {model_width}x{model_height}.")
-        else:
-            print("AVISO: Rodando em modo de simulação.")
-    except Exception as e:
-        print(f"ERRO ao iniciar o runner: {e}")
-        print("Continuando em modo de simulação...")
-        IS_RASPBERRY_PI = False
+    if IS_RASPBERRY_PI:
+        if not os.path.exists(model_path):
+            print(f"ERRO CRÍTICO: Arquivo do modelo '{model_path}' não encontrado!")
+            sys.exit(1)
+        runner = ImageImpulseRunner(model_path)
+        model_info = runner.init()
+        print(f"Modelo '{model_info['project']['name']}' carregado.")
+    else:
+        print("AVISO: Rodando em modo de simulação.")
 
     motor_controller = MotorControl(config)
     cap = cv2.VideoCapture(camera_index)
-    ret, frame = cap.read()
-    if not ret:
-        print("ERRO CRÍTICO: Não foi possível ler o primeiro frame da câmera.")
+    if not cap.isOpened():
+        print(f"ERRO CRÍTICO: Não foi possível abrir a câmera {camera_index}.")
         sys.exit(1)
-        
-    original_height, original_width = frame.shape[:2]
-    scale_x = original_width / model_width
-    scale_y = original_height / model_height
+    
+    # --- NOVO: Variáveis para cálculo de FPS ---
+    fps_counter = 0
+    start_time = time.time()
 
-    print("\n--- Sistema em execução... ---\n")
+    print("\n--- Sistema em execução. Pressione Ctrl+C ou 'q' para sair. ---\n")
 
     try:
         while True:
@@ -94,13 +95,12 @@ def main():
             results = None
             
             if runner:
-                # Redimensiona o frame para o tamanho esperado pelo modelo
-                resized_frame = cv2.resize(frame, (model_width, model_height))
-                img_rgb = cv2.cvtColor(resized_frame, cv2.COLOR_BGR2RGB)
-                
+                img_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
                 results = runner.classify(img_rgb)
                 
-                if DEBUG_MODE: print(results) 
+                # --- NOVO: Imprime o resultado bruto do modelo no console ---
+                if DEBUG_MODE:
+                    print(results) 
 
                 if "bounding_boxes" in results["result"].keys():
                     detections = [bbox for bbox in results["result"]["bounding_boxes"] if bbox['value'] >= confidence_threshold]
@@ -109,9 +109,17 @@ def main():
                         command_to_execute = best_detection['label']
             
             motor_controller.execute(command_to_execute)
+
+            # --- NOVO: Lógica de exibição de debug ---
+            fps_counter += 1
+            if (time.time() - start_time) > 1:
+                current_fps = fps_counter / (time.time() - start_time)
+                start_time = time.time()
+                fps_counter = 0
             
-            # Desenha as caixas no frame original, escalando as coordenadas
-            frame = draw_detections(frame, results, confidence_threshold, scale_x, scale_y)
+            frame = draw_detections(frame, results, confidence_threshold)
+            if DEBUG_MODE:
+                frame = draw_debug_info(frame, current_fps if 'current_fps' in locals() else 0, results)
             
             cv2.imshow("Auto-Pi-Lot - Visao", frame)
 
