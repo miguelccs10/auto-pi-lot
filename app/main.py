@@ -1,4 +1,4 @@
-# app/main.py (Versão Final com Subprocess para Bypassar o Bug)
+# app/main.py (Versão com Subprocess para Bypassar o Bug)
 
 import cv2
 import configparser
